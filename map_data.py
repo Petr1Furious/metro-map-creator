@@ -58,6 +58,7 @@ class Station(Element):
         self.name_relative_to = station_json.get("name_relative_to")
         self.hide_name = station_json.get("hide_name", False)
         self.is_planned = station_json.get("is_planned")
+        self.side_platforms = station_json.get("side_platforms", False)
 
         logging.info(
             f"Station: {self.name}\nLine: {self.line.name}\nLocation {position}"
@@ -538,6 +539,9 @@ class Line:
 
     def get_linear_metro_map(self, reverse_direction, start_station_name=None):
         start_station = self.get_station(start_station_name)
+        if start_station is None:
+            raise Exception("Start station not found")
+        left_to_right = start_station.side_platforms
 
         elements = list(self.elements)
         if reverse_direction:
@@ -621,20 +625,37 @@ class Line:
 
         total_width = max(last_top, last_bottom)
 
-        direction_image = get_direction_image(
-            self.logo_image_resized, stations[len(stations) - 1].name, self.map_data.font_path
-        )
+        direction_image = None
         reverse_direction_image = None
-        if not (
-                self.bidirectional
-                and start_station_name == stations[len(stations) - 1].name
-        ):
+
+        add_left_direction = not (
+            self.bidirectional
+            and start_station_name == stations[len(stations) - 1].name
+        )
+        if left_to_right:
+            add_left_direction = not add_left_direction
+
+        if add_left_direction:
+            station_name = stations[len(stations) - 1].name if not left_to_right else stations[0].name
+            direction_image = get_direction_image(
+                self.logo_image_resized,
+                station_name,
+                self.map_data.font_path,
+            )
             total_width += direction_image.width
         else:
             total_width += 20
-        if self.bidirectional and not start_station_name == stations[0].name:
+
+        add_right_direction = (
+            self.bidirectional and not start_station_name == stations[0].name
+        )
+        if left_to_right:
+            add_right_direction = not add_right_direction
+
+        if add_right_direction:
+            station_name = stations[0].name if not left_to_right else stations[len(stations) - 1].name
             reverse_direction_image = get_direction_image(
-                self.logo_image_resized, stations[0].name, self.map_data.font_path, True
+                self.logo_image_resized, station_name, self.map_data.font_path, True
             )
             total_width += reverse_direction_image.width
 
@@ -650,31 +671,42 @@ class Line:
 
         linear_line.start_logo_offset = None
         linear_line.end_logo_offset = None
-        linear_line.direction = "left"
-        if is_first_station:
-            linear_line.start = (total_width - 1 - 20 - first_offset // 2, 64)
+
+        if not left_to_right:
+            linear_line.direction = "left"
+            if is_first_station:
+                linear_line.start = (total_width - 1 - 20 - first_offset // 2, 64)
+            else:
+                linear_line.start = (total_width - 1, 64)
         else:
-            linear_line.start = (total_width - 1, 64)
+            linear_line.direction = "right"
+            if is_first_station:
+                linear_line.start = (20 + first_offset // 2, 64)
+            else:
+                linear_line.start = (0, 64)
 
         linear_metro_map_image = Image(
             width=total_width, height=128, background=Color("white")
         )
         linear_metro_map_image.virtual_pixel = "transparent"
 
-        if not (
-                self.bidirectional
-                and start_station_name == stations[len(stations) - 1].name
-        ):
+        if add_left_direction:
             linear_metro_map_image.composite(direction_image)
-        if self.bidirectional and not start_station_name == stations[0].name:
+            if left_to_right:
+                linear_line.start = (
+                    linear_line.start[0] + direction_image.width,
+                    linear_line.start[1],
+                )
+        if add_right_direction:
             linear_metro_map_image.composite(
                 reverse_direction_image,
                 left=linear_metro_map_image.width - reverse_direction_image.width,
             )
-            linear_line.start = (
-                linear_line.start[0] - reverse_direction_image.width,
-                linear_line.start[1],
-            )
+            if not left_to_right:
+                linear_line.start = (
+                    linear_line.start[0] - reverse_direction_image.width,
+                    linear_line.start[1],
+                )
 
         for num, station in enumerate(stations):
             if not station.is_transfer():
